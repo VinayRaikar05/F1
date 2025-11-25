@@ -13,6 +13,8 @@ computed_data/
 # Documentation files to exclude
 RUN_STEPS.md
 DEVELOPMENT_ROADMAP.md
+GITHUB_SETUP.md
+IMPLEMENTABLE_FEATURES.md
 
 # Virtual environment
 venv/

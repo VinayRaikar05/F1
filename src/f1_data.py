@@ -13,22 +13,53 @@ fastf1.Cache.enable_cache(cache_dir)
 FPS = 25
 DT = 1 / FPS
 
-def load_race_session(year, round_number):
-    session = fastf1.get_session(year, round_number, 'R')
-    session.load(telemetry=True)
-    return session
-
-
-def get_driver_colors(session):
-    color_mapping = fastf1.plotting.get_driver_color_mapping(session)
+def load_race_session(year: int, round_number: int, session_type: str = 'R'):
+    """
+    Load F1 session data from FastF1.
     
-    # Convert hex colors to RGB tuples
-    rgb_colors = {}
-    for driver, hex_color in color_mapping.items():
-        hex_color = hex_color.lstrip('#')
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        rgb_colors[driver] = rgb
-    return rgb_colors
+    Args:
+        year: Year of the race
+        round_number: Round number of the race
+        session_type: Type of session ('R' for Race, 'Q' for Qualifying, 'FP1', 'FP2', 'FP3' for Practice)
+    
+    Returns:
+        FastF1 session object with loaded telemetry
+    
+    Raises:
+        Exception: If session cannot be loaded
+    """
+    try:
+        session = fastf1.get_session(year, round_number, session_type)
+        print(f"Loading telemetry data...")
+        session.load(telemetry=True)
+        return session
+    except Exception as e:
+        raise Exception(f"Failed to load session {year} Round {round_number} ({session_type}): {str(e)}")
+
+
+def get_driver_colors(session) -> dict:
+    """
+    Get driver color mapping from session.
+    
+    Args:
+        session: FastF1 session object
+    
+    Returns:
+        Dictionary mapping driver codes to RGB color tuples
+    """
+    try:
+        color_mapping = fastf1.plotting.get_driver_color_mapping(session)
+        
+        # Convert hex colors to RGB tuples
+        rgb_colors = {}
+        for driver, hex_color in color_mapping.items():
+            hex_color = hex_color.lstrip('#')
+            rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+            rgb_colors[driver] = rgb
+        return rgb_colors
+    except Exception as e:
+        print(f"Warning: Could not load driver colors: {e}")
+        return {}
 
 
 def get_race_telemetry(session):
@@ -76,6 +107,7 @@ def get_race_telemetry(session):
         race_dist_all = []
         rel_dist_all = []
         lap_numbers = []
+        speed_all = []  # Speed in km/h
 
         total_dist_so_far = 0.0
 
@@ -90,8 +122,10 @@ def get_race_telemetry(session):
             t_lap = lap_tel["SessionTime"].dt.total_seconds().to_numpy()
             x_lap = lap_tel["X"].to_numpy()
             y_lap = lap_tel["Y"].to_numpy()
-            d_lap = lap_tel["Distance"].to_numpy()          
+            d_lap = lap_tel["Distance"].to_numpy()
             rd_lap = lap_tel["RelativeDistance"].to_numpy()
+            # Extract speed if available, convert from m/s to km/h
+            speed_lap = lap_tel["Speed"].to_numpy() * 3.6 if "Speed" in lap_tel.columns else np.zeros_like(t_lap)
 
             # normalise lap distance to start at 0
             d_lap = d_lap - d_lap.min()
@@ -108,6 +142,7 @@ def get_race_telemetry(session):
             race_dist_all.append(race_d_lap)
             rel_dist_all.append(rd_lap)
             lap_numbers.append(np.full_like(t_lap, lap_number))
+            speed_all.append(speed_lap)
 
         if not t_all:
             continue
@@ -118,22 +153,25 @@ def get_race_telemetry(session):
         race_dist_all = np.concatenate(race_dist_all)
         rel_dist_all = np.concatenate(rel_dist_all)
         lap_numbers = np.concatenate(lap_numbers)
+        speed_all = np.concatenate(speed_all)
 
         order = np.argsort(t_all)
         t_all = t_all[order]
         x_all = x_all[order]
         y_all = y_all[order]
         race_dist_all = race_dist_all[order]
-        rel_dist_all = rel_dist_all[order]            
+        rel_dist_all = rel_dist_all[order]
         lap_numbers = lap_numbers[order]
+        speed_all = speed_all[order]
 
         driver_data[code] = {
             "t": t_all,
             "x": x_all,
             "y": y_all,
             "dist": race_dist_all,
-            "rel_dist": rel_dist_all,                   
+            "rel_dist": rel_dist_all,
             "lap": lap_numbers,
+            "speed": speed_all,
         }
 
         t_min = t_all.min()
@@ -151,8 +189,9 @@ def get_race_telemetry(session):
         t = data["t"] - global_t_min  # Shift
         x = data["x"]
         y = data["y"]
-        dist = data["dist"]     
+        dist = data["dist"]
         rel_dist = data["rel_dist"]
+        speed = data["speed"]
 
         # ensure sorted by time
         order = np.argsort(t)
@@ -160,14 +199,16 @@ def get_race_telemetry(session):
         x_sorted = x[order]
         y_sorted = y[order]
         dist_sorted = dist[order]
-        rel_dist_sorted = rel_dist[order]      
+        rel_dist_sorted = rel_dist[order]
         lap_sorted = data["lap"][order]
+        speed_sorted = speed[order]
 
         x_resampled = np.interp(timeline, t_sorted, x_sorted)
         y_resampled = np.interp(timeline, t_sorted, y_sorted)
         dist_resampled = np.interp(timeline, t_sorted, dist_sorted)
         rel_dist_resampled = np.interp(timeline, t_sorted, rel_dist_sorted)
         lap_resampled = np.interp(timeline, t_sorted, lap_sorted)
+        speed_resampled = np.interp(timeline, t_sorted, speed_sorted)
 
         resampled_data[code] = {
             "t": timeline,
@@ -176,6 +217,7 @@ def get_race_telemetry(session):
             "dist": dist_resampled,   # race distance (metres since Lap 1 start)
             "rel_dist": rel_dist_resampled,
             "lap": lap_resampled,
+            "speed": speed_resampled,  # speed in km/h
         }
 
     # 5. Build the frames + LIVE LEADERBOARD
@@ -191,6 +233,7 @@ def get_race_telemetry(session):
             "y": float(d["y"][i]),
             "lap": int(round(d["lap"][i])),
             "rel_dist": float(d["rel_dist"][i]),
+            "speed": float(d["speed"][i]),  # Speed in km/h
           })
 
         # If for some reason we have no drivers at this instant
@@ -204,20 +247,47 @@ def get_race_telemetry(session):
         leader = snapshot[0]
         leader_lap = leader["lap"]
 
-        # 5c. Compute gap to car in front in SECONDS
+        # 5c. Compute gap to car ahead in SECONDS and interval to leader
         frame_data = {}
-
+        
+        # Calculate gaps based on distance difference and average speed
         for idx, car in enumerate(snapshot):
             code = car["code"]
             position = idx + 1
+            
+            if idx == 0:
+                # Leader - no gap
+                gap_to_ahead = 0.0
+                interval_to_leader = 0.0
+            else:
+                # Calculate gap to car ahead
+                car_ahead = snapshot[idx - 1]
+                dist_diff = car_ahead["dist"] - car["dist"]
+                
+                # Use average speed of both cars to estimate time gap
+                avg_speed = (car["speed"] + car_ahead["speed"]) / 2.0
+                if avg_speed > 10:  # Avoid division by zero for very slow speeds
+                    gap_to_ahead = (dist_diff / 1000.0) / (avg_speed / 3600.0)  # Convert to seconds
+                else:
+                    gap_to_ahead = 0.0
+                
+                # Calculate interval to leader
+                leader_dist_diff = leader["dist"] - car["dist"]
+                if car["speed"] > 10:
+                    interval_to_leader = (leader_dist_diff / 1000.0) / (car["speed"] / 3600.0)
+                else:
+                    interval_to_leader = 0.0
 
             frame_data[code] = {
                 "x": car["x"],
                 "y": car["y"],
-                "dist": car["dist"],    
+                "dist": car["dist"],
                 "lap": car["lap"],
                 "rel_dist": round(car["rel_dist"], 6),
                 "position": position,
+                "speed": round(car["speed"], 1),  # Speed in km/h, rounded to 1 decimal
+                "gap_to_ahead": round(gap_to_ahead, 3),  # Gap in seconds
+                "interval_to_leader": round(interval_to_leader, 3),  # Interval in seconds
             }
 
         frames.append({
