@@ -81,6 +81,3 @@ This project is licensed under the MIT License.
 
 No copyright infringement intended. Formula 1 and related trademarks are the property of their respective owners. All data used is sourced from publicly available APIs and is used for educational and non-commercial purposes only.
 
----
-
-Built with ❤️ by [Tom Shaw](https://tomshaw.dev)
